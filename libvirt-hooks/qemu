@@ -1,0 +1,36 @@
+#!/bin/bash
+# /etc/libvirt/hooks/qemu — port forwarding for Home Assistant VM
+#
+# Forwards host LAN ports to the NAT'd VM so LAN devices can reach HA.
+# Triggered automatically by libvirt on VM start/stop.
+#
+# Install:
+#   sudo cp qemu /etc/libvirt/hooks/qemu
+#   sudo chmod +x /etc/libvirt/hooks/qemu
+#   sudo systemctl restart libvirtd
+
+# --- Configuration ---
+GUEST_NAME="homeassistant"  # VM name in virsh
+GUEST_IP="192.168.122.12"   # VM IP on virbr0
+HOST_IFACE="wlp58s0"        # Host's LAN-facing interface
+
+# Ports to forward: host_port:guest_port
+FORWARDS="8123:8123 1883:1883"
+
+if [ "$1" = "$GUEST_NAME" ]; then
+    if [ "$2" = "started" ]; then
+        for fwd in $FORWARDS; do
+            HP="${fwd%%:*}"
+            GP="${fwd##*:}"
+            iptables -t nat -I PREROUTING -i "$HOST_IFACE" -p tcp --dport "$HP" -j DNAT --to "$GUEST_IP:$GP"
+            iptables -I FORWARD -d "$GUEST_IP" -p tcp --dport "$GP" -j ACCEPT
+        done
+    elif [ "$2" = "stopped" ] || [ "$2" = "reconnect" ]; then
+        for fwd in $FORWARDS; do
+            HP="${fwd%%:*}"
+            GP="${fwd##*:}"
+            iptables -t nat -D PREROUTING -i "$HOST_IFACE" -p tcp --dport "$HP" -j DNAT --to "$GUEST_IP:$GP" 2>/dev/null
+            iptables -D FORWARD -d "$GUEST_IP" -p tcp --dport "$GP" -j ACCEPT 2>/dev/null
+        done
+    fi
+fi
